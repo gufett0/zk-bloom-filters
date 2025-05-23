@@ -3,7 +3,9 @@
     "version": "1.0.0",
     "main": "index.js",
     "scripts": {
-        "test": "mocha circuits/v3_flag_propagation/tests.js"
+        "test": "mocha circuits/v3_flag_propagation/witness.test.js",
+        "prove": "mocha circuits/v3_flag_propagation/snark.test.js",
+        "compile": "circom circuits/v3_flag_propagation/non_membership.circom --r1cs --wasm --sym -o circuits/artifacts/circuits"
     },
     "keywords": [],
     "author": "",
@@ -16,7 +18,7 @@
         "circomlib": "^2.0.4",
         "circomlibjs": "^0.1.4",
         "dotenv": "^16.4.5",
-        "snarkjs": "latest"
+        "snarkjs": "^0.7.5"
 
     },
     "devDependencies": {

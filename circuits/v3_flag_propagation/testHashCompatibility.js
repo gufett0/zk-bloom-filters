@@ -1,7 +1,7 @@
 const { expect } = require("chai");
 const path = require("path");
 const wasm_tester = require("circom_tester").wasm;
-const { buildPoseidon } = require("circomlibjs");
+const { buildPoseidon, poseidon } = require("circomlibjs");
 
 let poseidonInstance = null;
 
@@ -26,9 +26,9 @@ async function initializePoseidon() {
 //     };
 // }
 
-
 async function createPoseidonHasher() {
     const poseidon = await initializePoseidon();
+    console.log("poseidon ", poseidon);
     
     return (inputs) => {
         const hash = poseidon(inputs);
