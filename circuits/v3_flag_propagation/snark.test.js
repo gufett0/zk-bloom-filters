@@ -13,23 +13,33 @@ const VERIFICATION_KEY_FILE = path.join(ARTIFACTS_DIR, "verification_key.json");
 const FILTER_SIZE = 16384;
 const SMT_DEPTH = 20;
 
+const ARTIFACTS_DIR2 = path.join(__dirname, "../artifacts/circuits2");
+const UNION_WASM_FILE = path.join(ARTIFACTS_DIR2, "union_set_js/union_set.wasm");
+const UNION_ZKEY_FILE = path.join(ARTIFACTS_DIR2, "union_set.zkey");
+const UNION_VERIFICATION_KEY_FILE = path.join(ARTIFACTS_DIR2, "verification_key.json");
 
-async function generateProof(input) {
+const NUM_INPUTS = 16;
+
+async function generateProof(input, circuitType = 'non_membership') {
+    const wasmFile = circuitType === 'union' ? UNION_WASM_FILE : WASM_FILE;
+    const zkeyFile = circuitType === 'union' ? UNION_ZKEY_FILE : ZKEY_FILE;
+    
     const { proof, publicSignals } = await snarkjs.groth16.fullProve(
         input,
-        WASM_FILE,
-        ZKEY_FILE
+        wasmFile,
+        zkeyFile
     );
     return { proof, publicSignals };
 }
 
-async function verifyProof(proof, publicSignals) {
-    const vKey = JSON.parse(fs.readFileSync(VERIFICATION_KEY_FILE));
+async function verifyProof(proof, publicSignals, circuitType = 'non_membership') {
+    const vkeyFile = circuitType === 'union' ? UNION_VERIFICATION_KEY_FILE : VERIFICATION_KEY_FILE;
+    const vKey = JSON.parse(fs.readFileSync(vkeyFile));
     return await snarkjs.groth16.verify(vKey, publicSignals, proof);
 }
 
 describe("SNARK Proof Generation and Verification", function() {
-    this.timeout(120000);
+    this.timeout(180000); // Increased timeout for union proofs
     
     before(async () => {
         const requiredFiles = [WASM_FILE, ZKEY_FILE, VERIFICATION_KEY_FILE];
@@ -38,11 +48,28 @@ describe("SNARK Proof Generation and Verification", function() {
                 throw new Error(`Required file not found: ${file}`);
             }
         }
-        console.log("✓ All SNARK artifacts found");
+        console.log("All non-membership SNARK artifacts found");
+        
+        // Check union artifacts
+        const unionFiles = [UNION_WASM_FILE, UNION_ZKEY_FILE, UNION_VERIFICATION_KEY_FILE];
+        let unionAvailable = true;
+        for (const file of unionFiles) {
+            if (!fs.existsSync(file)) {
+                console.log(`Union file not found: ${file} - skipping union tests`);
+                unionAvailable = false;
+                break;
+            }
+        }
+        if (unionAvailable) {
+            console.log("All BloomFilterUnion SNARK artifacts found");
+        }
     });
+    
     after(() => {
         process.nextTick(() => process.exit(0));
     });
+
+    // ========== NON-MEMBERSHIP TESTS ==========
 
     it("should generate and verify valid proof for non-membership", async () => {
         console.log("Testing valid proof generation for non-membership case...");
@@ -242,5 +269,170 @@ describe("SNARK Proof Generation and Verification", function() {
         
         // reasonable performance expectations?
         expect(avgTime).to.be.below(10000); 
+    });
+
+    // ========== BLOOM FILTER UNION TESTS ==========
+
+    it("should fail proof generation with incorrect union computation", async () => {
+        if (!fs.existsSync(UNION_WASM_FILE)) {
+            console.log("!!! Skipping union test - artifacts not found");
+            return;
+        }
+        
+        console.log("Testing SNARK proof failure with incorrect union...");
+        
+        const parentStates = [];
+        for (let i = 0; i < NUM_INPUTS; i++) {
+            if (i < 3) {
+                const key = BigInt(ethers.hexlify(ethers.randomBytes(32)));
+                const indices = await computeBloomIndices(key, FILTER_SIZE);
+                parentStates.push(createBitArray(FILTER_SIZE, indices));
+            } else {
+                parentStates.push(new Array(FILTER_SIZE).fill(0));
+            }
+        }
+        
+        const incorrectUnion = [...parentStates[0]];
+
+        const input = {
+            parentStates: parentStates.map(state => state.map(bit => bit.toString())),
+            unionState: incorrectUnion.map(bit => bit.toString())
+        };
+
+        try {
+            await generateProof(input, 'union');
+            expect.fail("Should have failed with incorrect union");
+        } catch (error) {
+            const errorMessage = error.message.toLowerCase();
+            const isValidError = errorMessage.includes("assert failed") || 
+                                errorMessage.includes("constraint") || 
+                                errorMessage.includes("error");
+            expect(isValidError).to.be.true;
+            console.log("✓ Correctly failed SNARK proof with incorrect union");
+        }
+    });
+
+    it("should measure proof generation performance for different union complexities", async () => {
+        if (!fs.existsSync(UNION_WASM_FILE)) {
+            console.log("!!! Skipping union performance test - artifacts not found");
+            return;
+        }
+        
+        console.log("Measuring BloomFilterUnion proof generation performance...");
+        
+        const scenarios = [
+            { name: "All Empty", numNonEmpty: 0 },
+            { name: "Single Element", numNonEmpty: 1 },
+            { name: "Quarter Full", numNonEmpty: 4 },
+            { name: "Half Full", numNonEmpty: 8 }
+        ];
+
+        for (const scenario of scenarios) {
+            console.log(`  Testing scenario: ${scenario.name}`);
+            
+            const parentStates = [];
+            for (let i = 0; i < NUM_INPUTS; i++) {
+                if (i < scenario.numNonEmpty) {
+                    const key = BigInt(ethers.hexlify(ethers.randomBytes(32)));
+                    const indices = await computeBloomIndices(key, FILTER_SIZE);
+                    parentStates.push(createBitArray(FILTER_SIZE, indices));
+                } else {
+                    parentStates.push(new Array(FILTER_SIZE).fill(0));
+                }
+            }
+            
+            const expectedUnion = new Array(FILTER_SIZE).fill(0);
+            for (let i = 0; i < FILTER_SIZE; i++) {
+                for (let j = 0; j < NUM_INPUTS; j++) {
+                    if (parentStates[j][i] === 1) {
+                        expectedUnion[i] = 1;
+                        break;
+                    }
+                }
+            }
+
+            const input = {
+                parentStates: parentStates.map(state => state.map(bit => bit.toString())),
+                unionState: expectedUnion.map(bit => bit.toString())
+            };
+
+            const startTime = Date.now();
+            const { proof, publicSignals } = await generateProof(input, 'union');
+            const proofTime = Date.now() - startTime;
+            
+            const verified = await verifyProof(proof, publicSignals, 'union');
+            expect(verified).to.be.true;
+            
+            console.log(`    ${scenario.name}: ${proofTime}ms`);
+        }
+        
+        console.log("✓ Performance testing completed for all scenarios");
+    });
+
+   it("should generate proof for realistic UTXO merge scenario", async () => {
+        if (!fs.existsSync(UNION_WASM_FILE)) {
+            console.log("!!! Skipping realistic UTXO test - artifacts not found");
+            return;
+        }
+        
+        console.log("Testing SNARK proof for realistic UTXO chain state merge...");
+        
+        // simulate a realistic scenario where UTXOs have accumulated chain states
+        const parentStates = [];
+        
+        // first few utxos have accumulated many masked commitments
+        for (let i = 0; i < 3; i++) {
+            const filter = new Array(FILTER_SIZE).fill(0);
+            for (let j = 0; j < 20; j++) { 
+                const key = BigInt(ethers.hexlify(ethers.randomBytes(32)));
+                const indices = await computeBloomIndices(key, FILTER_SIZE);
+                indices.forEach(idx => filter[idx] = 1);
+            }
+            parentStates.push(filter);
+        }
+        
+        // middle utxos have moderate chain states
+        for (let i = 3; i < 8; i++) {
+            const filter = new Array(FILTER_SIZE).fill(0);
+            for (let j = 0; j < 5; j++) { // 5 masked commitments each
+                const key = BigInt(ethers.hexlify(ethers.randomBytes(32)));
+                const indices = await computeBloomIndices(key, FILTER_SIZE);
+                indices.forEach(idx => filter[idx] = 1);
+            }
+            parentStates.push(filter);
+        }
+        
+        // rest of the set has empty chain states
+        for (let i = 8; i < NUM_INPUTS; i++) {
+            parentStates.push(new Array(FILTER_SIZE).fill(0));
+        }
+        
+        const expectedUnion = new Array(FILTER_SIZE).fill(0);
+        for (let i = 0; i < FILTER_SIZE; i++) {
+            for (let j = 0; j < NUM_INPUTS; j++) {
+                if (parentStates[j][i] === 1) {
+                    expectedUnion[i] = 1;
+                    break;
+                }
+            }
+        }
+
+        const input = {
+            parentStates: parentStates.map(state => state.map(bit => bit.toString())),
+            unionState: expectedUnion.map(bit => bit.toString())
+        };
+
+        const startTime = Date.now();
+        const { proof, publicSignals } = await generateProof(input, 'union');
+        const proofTime = Date.now() - startTime;
+        console.log(`  Realistic scenario proof time: ${proofTime}ms`);
+
+        const verified = await verifyProof(proof, publicSignals, 'union');
+        
+        expect(verified).to.be.true;
+        console.log("✓ Valid proof generated for realistic UTXO merge scenario");
+        
+        const setBits = expectedUnion.filter(bit => bit === 1).length;
+        console.log(`  Final union has ${setBits} bits set out of ${FILTER_SIZE} (${(setBits/FILTER_SIZE*100).toFixed(2)}% density)`);
     });
 });

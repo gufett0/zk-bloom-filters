@@ -88,95 +88,55 @@ template BloomFilter(n, k, depth) {
 }
 
 template BloomFilterUnion(m, numInputs) {
-    // Parent bloom filters from input UTXOs
-    signal input parentStates[numInputs][m];
     
-    // The claimed union bloom filter for the output UTXO
-    signal input unionState[m];
-    
-    // Intermediate signals for computing the union iteratively
+    signal input parentStates[numInputs][m]; // bloom filters from input utxos
+    signal input unionState[m]; // this is the merged bloom filter claimed by the user
+
     signal intermediate[numInputs-1][m];
     
-    // Process each bit position in the bloom filter
     for (var j = 0; j < m; j++) {
-        // Verify all inputs are binary (0 or 1)
+        // enforce binary outputs
         for (var i = 0; i < numInputs; i++) {
-            // Constraint: each bit must be 0 or 1
             parentStates[i][j] * (parentStates[i][j] - 1) === 0;
         }
-        
-        // Verify the output union bit is binary
         unionState[j] * (unionState[j] - 1) === 0;
         
-        // Compute OR operation iteratively for this bit position
+        // compute OR:  
         if (numInputs == 2) {
-            // Direct computation for 2 inputs (common case)
-            // OR operation: A OR B = A + B - A*B
+            // this is simply A OR B = A + B - A*B
             unionState[j] === parentStates[0][j] + parentStates[1][j] - parentStates[0][j] * parentStates[1][j];
         } else {
-            // For more inputs, compute iteratively
-            // First OR: parentStates[0] OR parentStates[1]
+            // first OR: parentStates[0] OR parentStates[1]
             intermediate[0][j] <== parentStates[0][j] + parentStates[1][j] - parentStates[0][j] * parentStates[1][j];
             
-            // Subsequent ORs: intermediate[i-1] OR parentStates[i+1]
+            // subsequent ORs: intermediate[i-1] OR parentStates[i+1]
             for (var i = 1; i < numInputs - 1; i++) {
                 intermediate[i][j] <== intermediate[i-1][j] + parentStates[i+1][j] - intermediate[i-1][j] * parentStates[i+1][j];
             }
             
-            // Final result must match the claimed union
+            // final result must match the claimed union at the given index
             unionState[j] === intermediate[numInputs-2][j];
         }
     }
 }
 
-// Version with commitment binding to ensure chain states are linked to UTXOs
+// WIP
 template BloomFilterUnionWithBinding(m, numInputs) {
-    // Bloom filter inputs
+
     signal input parentStates[numInputs][m];
     signal input unionState[m];
     
-    // Binding to existing Transaction circuit outputs
+    // we also take inputs from existing tx circuit outputs
     signal input outputCommitment;  // This should match the outputCommitment from Transaction
     signal input outAmount;
     signal input outPubkey;
     signal input outBlinding;
     
-    // First verify the bloom filter union
-    component unionCheck = BloomFilterUnion(m, numInputs);
-    for (var i = 0; i < numInputs; i++) {
-        for (var j = 0; j < m; j++) {
-            unionCheck.parentStates[i][j] <== parentStates[i][j];
-        }
-    }
-    for (var j = 0; j < m; j++) {
-        unionCheck.unionState[j] <== unionState[j];
-    }
-    
-    // Hash the bloom filter state to a single value
-    // Since m is large (e.g., 16384), we need to compress it
-    // Option 1: Hash chunks of the bloom filter
-    component stateHasher = Poseidon(2);
-    
-    // Convert bloom filter to number (for small portions)
-    // In practice, you'd hash multiple chunks
-    component bitsToNum = Bits2Num(254); // Poseidon field size limit
-    var sum = 0;
-    for (var i = 0; i < 254 && i < m; i++) {
-        sum += unionState[i] * (1 << i);
-    }
-    
-    // Simple binding: hash the bloom filter representation with the blinding
-    stateHasher.inputs[0] <== sum;
-    stateHasher.inputs[1] <== outBlinding;
-    
-    // Create extended commitment that includes chain state
-    component extendedCommitment = Poseidon(4);
-    extendedCommitment.inputs[0] <== outAmount;
-    extendedCommitment.inputs[1] <== outPubkey;
-    extendedCommitment.inputs[2] <== outBlinding;
-    extendedCommitment.inputs[3] <== stateHasher.out;
-    
-    // This extended commitment should be stored alongside the regular commitment
-    signal output chainBoundCommitment;
-    chainBoundCommitment <== extendedCommitment.out;
+// steps:
+//  - first we verify bloom filter union is correct (make a component of BloomFilterUnion)
+//  - then we bind the chain state to the unioned bloom filter: 
+//  - compress the large bloom filter into a manageable hash (e.g. take first 254 bits of unionState)
+//  - convert those bits into a single number and hash (poseidon componente) it with the same blinding 
+//  - this creates a commitment that binds the chain state to the unioned bloom filter
+//  - chainBoundCommitment: a hash that proves this UTXO inherits the correct chain state
 }

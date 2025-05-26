@@ -4,7 +4,7 @@ const { ethers } = require("ethers");
 const { wasm } = require("circom_tester");
 const { computeBloomIndices, createBitArray, setupSMTree } = require("./utils");
 
-describe("Bloom Filter Circuit Tests", function() {
+describe("Bloom Filter Non-membership tests", function() {
     this.timeout(1000000);
     
     let circuit;
@@ -318,5 +318,303 @@ describe("Bloom Filter Circuit Tests", function() {
 
         expect(results.every(r => r === results[0])).to.be.true;
         console.log(`Consistent output across runs: ${results[0]}`);
+    });
+});
+
+describe("BloomFilterUnion Circuit Tests", function() {
+    this.timeout(1000000);
+    
+    let unionCircuit;
+    const FILTER_SIZE = 16384;
+    const NUM_INPUTS = 16;
+    
+    before(async () => {
+        unionCircuit = await wasm(path.join(__dirname, "union_set.circom"));
+    });
+
+    it("should correctly compute union of empty bloom filters", async () => {
+        const parentStates = Array(NUM_INPUTS).fill(null).map(() => new Array(FILTER_SIZE).fill(0));
+        const expectedUnion = new Array(FILTER_SIZE).fill(0);
+
+        const input = {
+            parentStates: parentStates,
+            unionState: expectedUnion
+        };
+
+        const witness = await unionCircuit.calculateWitness(input);
+        await unionCircuit.checkConstraints(witness);
+        console.log("Empty bloom filters union test passed");
+    });
+
+    it("should correctly compute union with one non-empty bloom filter", async () => {
+        const parentStates = Array(NUM_INPUTS).fill(null).map(() => new Array(FILTER_SIZE).fill(0));
+        
+        const testKey = BigInt(ethers.hexlify(ethers.randomBytes(32)));
+        const testIndices = await computeBloomIndices(testKey, FILTER_SIZE);
+        parentStates[0] = createBitArray(FILTER_SIZE, testIndices);
+        
+        const expectedUnion = [...parentStates[0]];
+
+        const input = {
+            parentStates: parentStates,
+            unionState: expectedUnion
+        };
+
+        const witness = await unionCircuit.calculateWitness(input);
+        await unionCircuit.checkConstraints(witness);
+        console.log("One non-empty bloom filter union test passed");
+    });
+
+    it("should correctly compute union of identical bloom filters", async () => {
+        const testKey = BigInt(ethers.hexlify(ethers.randomBytes(32)));
+        const testIndices = await computeBloomIndices(testKey, FILTER_SIZE);
+        const singleFilter = createBitArray(FILTER_SIZE, testIndices);
+        
+        const parentStates = Array(NUM_INPUTS).fill(null).map(() => [...singleFilter]);
+        
+        // union of identical filters should be the same filter
+        const expectedUnion = [...singleFilter];
+
+        const input = {
+            parentStates: parentStates,
+            unionState: expectedUnion
+        };
+
+        const witness = await unionCircuit.calculateWitness(input);
+        await unionCircuit.checkConstraints(witness);
+        console.log("Identical bloom filters union test passed");
+    });
+
+    it("should correctly compute union of multiple different bloom filters", async () => {
+        const parentStates = [];
+        
+        for (let i = 0; i < NUM_INPUTS; i++) {
+            const key = BigInt(ethers.hexlify(ethers.randomBytes(32)));
+            const indices = await computeBloomIndices(key, FILTER_SIZE);
+            parentStates.push(createBitArray(FILTER_SIZE, indices));
+        }
+        
+        const expectedUnion = new Array(FILTER_SIZE).fill(0);
+        for (let i = 0; i < FILTER_SIZE; i++) {
+            for (let j = 0; j < NUM_INPUTS; j++) {
+                if (parentStates[j][i] === 1) {
+                    expectedUnion[i] = 1;
+                    break;
+                }
+            }
+        }
+
+        const input = {
+            parentStates: parentStates,
+            unionState: expectedUnion
+        };
+
+        const witness = await unionCircuit.calculateWitness(input);
+        await unionCircuit.checkConstraints(witness);
+        console.log("Multiple different bloom filters union test passed");
+    });
+
+    it("should fail when union state is incorrect", async () => {
+        const parentStates = [];
+        
+        // Create a few different bloom filters
+        for (let i = 0; i < NUM_INPUTS; i++) {
+            if (i < 3) { // Only make first 3 non-empty for simplicity
+                const key = BigInt(ethers.hexlify(ethers.randomBytes(32)));
+                const indices = await computeBloomIndices(key, FILTER_SIZE);
+                parentStates.push(createBitArray(FILTER_SIZE, indices));
+            } else {
+                parentStates.push(new Array(FILTER_SIZE).fill(0));
+            }
+        }
+        
+        const incorrectUnion = [...parentStates[0]];
+
+        const input = {
+            parentStates: parentStates,
+            unionState: incorrectUnion
+        };
+
+        try {
+            await unionCircuit.calculateWitness(input);
+            expect.fail("Should have thrown an error for incorrect union");
+        } catch (err) {
+            expect(err.toString()).to.satisfy(msg => 
+                msg.includes("Assert Failed") || msg.includes("Constraint doesn't match")
+            );
+            console.log("Correctly rejected incorrect union state");
+        }
+    });
+
+    it("should fail when parent states contain non-binary values", async () => {
+        const parentStates = Array(NUM_INPUTS).fill(null).map(() => new Array(FILTER_SIZE).fill(0));
+        parentStates[0][0] = 2; 
+        
+        const expectedUnion = new Array(FILTER_SIZE).fill(0);
+
+        const input = {
+            parentStates: parentStates,
+            unionState: expectedUnion
+        };
+
+        try {
+            await unionCircuit.calculateWitness(input);
+            expect.fail("Should have thrown an error for non-binary values");
+        } catch (err) {
+            expect(err.toString()).to.include("Assert Failed");
+            console.log("Correctly rejected non-binary parent state values");
+        }
+    });
+
+    it("should fail when union state contains non-binary values", async () => {
+        
+        const parentStates = Array(NUM_INPUTS).fill(null).map(() => new Array(FILTER_SIZE).fill(0));
+        
+        const invalidUnion = new Array(FILTER_SIZE).fill(0);
+        invalidUnion[0] = 3; 
+
+        const input = {
+            parentStates: parentStates,
+            unionState: invalidUnion
+        };
+
+        try {
+            await unionCircuit.calculateWitness(input);
+            expect.fail("Should have thrown an error for non-binary union values");
+        } catch (err) {
+            expect(err.toString()).to.include("Assert Failed");
+            console.log("Correctly rejected non-binary union state values");
+        }
+    });
+
+    it("should handle complex union with multiple overlapping elements", async () => {
+        const parentStates = [];
+        const allKeys = [];
+        
+        // create filters with some overlapping elements
+        for (let i = 0; i < NUM_INPUTS; i++) {
+            const keys = [];
+            
+            // each filter gets 2-3 unique keys plus some shared ones
+            for (let j = 0; j < 2; j++) {
+                keys.push(BigInt(ethers.hexlify(ethers.randomBytes(32))));
+            }
+            
+            // every other filter shares a key with the previous one
+            if (i > 0 && i % 2 === 1 && allKeys.length > 0) {
+                keys.push(allKeys[allKeys.length - 1]);
+            }
+            
+            allKeys.push(...keys);
+            
+            // build filter for this set of keys
+            const filter = new Array(FILTER_SIZE).fill(0);
+            for (const key of keys) {
+                const indices = await computeBloomIndices(key, FILTER_SIZE);
+                indices.forEach(idx => filter[idx] = 1);
+            }
+            parentStates.push(filter);
+        }
+
+        const expectedUnion = new Array(FILTER_SIZE).fill(0);
+        for (let i = 0; i < FILTER_SIZE; i++) {
+            for (let j = 0; j < NUM_INPUTS; j++) {
+                if (parentStates[j][i] === 1) {
+                    expectedUnion[i] = 1;
+                    break;
+                }
+            }
+        }
+
+        const input = {
+            parentStates: parentStates,
+            unionState: expectedUnion
+        };
+
+        const witness = await unionCircuit.calculateWitness(input);
+        await unionCircuit.checkConstraints(witness);
+        console.log("Complex overlapping union test passed");
+    });
+
+    it("should maintain commutativity property for multiple inputs", async () => {
+        const originalStates = [];
+        for (let i = 0; i < NUM_INPUTS; i++) {
+            const key = BigInt(ethers.hexlify(ethers.randomBytes(32)));
+            const indices = await computeBloomIndices(key, FILTER_SIZE);
+            originalStates.push(createBitArray(FILTER_SIZE, indices));
+        }
+        
+        const expectedUnion = new Array(FILTER_SIZE).fill(0);
+        for (let i = 0; i < FILTER_SIZE; i++) {
+            for (let j = 0; j < NUM_INPUTS; j++) {
+                if (originalStates[j][i] === 1) {
+                    expectedUnion[i] = 1;
+                    break;
+                }
+            }
+        }
+
+        // test with original order
+        const input1 = {
+            parentStates: originalStates,
+            unionState: expectedUnion
+        };
+
+        const witness1 = await unionCircuit.calculateWitness(input1);
+        await unionCircuit.checkConstraints(witness1);
+
+        // test with shuffled order
+        const shuffledStates = [...originalStates].sort(() => Math.random() - 0.5);
+        const input2 = {
+            parentStates: shuffledStates,
+            unionState: expectedUnion
+        };
+
+        const witness2 = await unionCircuit.calculateWitness(input2);
+        await unionCircuit.checkConstraints(witness2);
+        
+        console.log("Commutativity property verified for multiple inputs");
+    });
+
+    it("should handle edge case with maximum density bloom filter", async () => {
+        const parentStates = [];
+        
+        // create one nearly full bloom filter
+        const highDensityFilter = new Array(FILTER_SIZE);
+        for (let i = 0; i < FILTER_SIZE; i++) {
+            highDensityFilter[i] = Math.random() > 0.1 ? 1 : 0; // 90% density
+        }
+        parentStates.push(highDensityFilter);
+        
+        // fill the rest with mostly empty filters
+        for (let i = 1; i < NUM_INPUTS; i++) {
+            if (i < 3) {
+                const key = BigInt(ethers.hexlify(ethers.randomBytes(32)));
+                const indices = await computeBloomIndices(key, FILTER_SIZE);
+                parentStates.push(createBitArray(FILTER_SIZE, indices));
+            } else {
+                parentStates.push(new Array(FILTER_SIZE).fill(0));
+            }
+        }
+        
+        // union with high-density filter (should be mostly 1s)
+        const expectedUnion = new Array(FILTER_SIZE).fill(0);
+        for (let i = 0; i < FILTER_SIZE; i++) {
+            for (let j = 0; j < NUM_INPUTS; j++) {
+                if (parentStates[j][i] === 1) {
+                    expectedUnion[i] = 1;
+                    break;
+                }
+            }
+        }
+
+        const input = {
+            parentStates: parentStates,
+            unionState: expectedUnion
+        };
+
+        const witness = await unionCircuit.calculateWitness(input);
+        await unionCircuit.checkConstraints(witness);
+        console.log("High density bloom filter union test passed");
     });
 });
