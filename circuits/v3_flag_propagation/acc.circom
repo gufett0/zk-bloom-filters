@@ -1,47 +1,85 @@
 pragma circom 2.1.9;
 
+include "../../node_modules/circomlib/circuits/comparators.circom";
 include "./bloom.circom";
 
-template AncestralCommitmentComplianceFieldChunked(numChunks, k, depth, maxInputs) {
-    // Number of actual inputs (2 to maxInputs)
+/**
+ * AncestralCommitmentComplianceFieldChunked
+ * ----------------------------------------
+ * Validates that a set of `parentStates` (Bloom-filter field elements) has been
+ * merged correctly into `unionState`, proves that the corresponding hash is
+ * the one included in the external data, and enforces that the masked
+ * commitment (`flaggedStateChunks`) **is not** already present in the Bloom
+ * filter.
+ *
+ * Template parameters
+ *  - numChunks   : number of 254-bit field elements that encode the Bloom filter
+ *  - k           : number of Bloom-filter hash functions (normally 2)
+ *  - depth       : depth of the SMT that authenticates the Bloom filter root
+ *  - maxInputs   : maximum number of direct parents/inputs that can be merged
+ *  - mBits       : exact Bloom-filter size (in bits). Needed so that the last
+ *                  chunk may be < 254 bits when mBits % 254 ≠ 0.
+ */
+
+template AncestralCommitmentComplianceFieldChunked(
+        numChunks,
+        k,
+        depth,
+        maxInputs,
+        mBits
+) {
+    // ──────────────────────────────────────────────────────────────────────
+    // INPUTS
+    // --------------------------------------------------------------------
+    // Number of actually-provided inputs (2 … maxInputs)
     signal input numActiveInputs;
-    
-    // Parent states as arrays of field element chunks
+
+    // Parent states (each split in `numChunks` field-element chunks)
     signal input parentStates[maxInputs][numChunks];
-    
-    // Claimed union state as array of chunks
+
+    // Claimed union state (same chunking)
     signal input unionState[numChunks];
-    
-    // Hash of parent states (to be included in extDataHash)
+
+    // Hash of the parent states (included in extDataHash on-chain)
     signal input chainStatesHash;
-    
-    // Flagged masked commitment as array of chunks
+
+    // The masked commitment we are trying to spend, chunked already
     signal input flaggedStateChunks[numChunks];
-    
-    // SMT proof inputs
+
+    // SMT inputs authenticating the Bloom filter leaf
     signal input root;
     signal input siblings[depth];
     signal input key;
-    signal input value; // Hash of flaggedStateChunks
+    signal input value;      // this should correspond to Poseidon(bloom(C_hat))
     signal input auxKey;
     signal input auxValue;
     signal input auxIsEmpty;
-    signal input isExclusion;
-    
-    signal output notInSet;
-    signal output chainStateValid;
-    
-    // Verify numActiveInputs is within valid range (2 to maxInputs)
-    component gte = GreaterEqThan(5);
+    signal input isExclusion; // 1 → non-membership proof
+
+    // ──────────────────────────────────────────────────────────────────────
+    // OUTPUTS
+    // --------------------------------------------------------------------
+    signal output notInSet;        // 1 ⇔ flagged commitment not in Bloom filter
+    signal output chainStateValid; // 1 ⇔ parentStates hash == chainStatesHash
+
+    // ──────────────────────────────────────────────────────────────────────
+    // (1) Check that numActiveInputs ∈ [2,maxInputs]
+    // --------------------------------------------------------------------
+    component gte = GreaterEqThan(5); // 5-bit comparator (max 31)
     gte.in[0] <== numActiveInputs;
     gte.in[1] <== 2;
+
     component lte = LessEqThan(5);
     lte.in[0] <== numActiveInputs;
     lte.in[1] <== maxInputs;
-    signal validRange <== gte.out * lte.out;
-    validRange === 1;
-    
-    // 1. Verify chainStatesHash matches the provided parentStates
+
+    signal rangeOk;
+    rangeOk <== gte.out * lte.out;
+    rangeOk === 1;
+
+    // ──────────────────────────────────────────────────────────────────────
+    // (2) Parent states hash must equal the public `chainStatesHash`
+    // --------------------------------------------------------------------
     component parentHasher = ParentStatesHasherFieldChunked(numChunks, maxInputs);
     parentHasher.numActiveInputs <== numActiveInputs;
     for (var i = 0; i < maxInputs; i++) {
@@ -49,13 +87,16 @@ template AncestralCommitmentComplianceFieldChunked(numChunks, k, depth, maxInput
             parentHasher.parentStates[i][c] <== parentStates[i][c];
         }
     }
-    
-    // This ensures the provided parentStates match the hash
+
     parentHasher.hash === chainStatesHash;
-    
-    // 2. Verify bloom filter union is computed correctly
-    component bloomUnion = BloomFilterUnionFieldChunked(numChunks, maxInputs);
+    chainStateValid <== 1; // will remain 1 as long as the equality holds
+
+    // ──────────────────────────────────────────────────────────────────────
+    // (3) Check that `unionState` is indeed the bitwise-OR of the active parents
+    // --------------------------------------------------------------------
+    component bloomUnion = BloomFilterUnionFieldChunked(numChunks, maxInputs, mBits);
     bloomUnion.numActiveInputs <== numActiveInputs;
+
     for (var i = 0; i < maxInputs; i++) {
         for (var c = 0; c < numChunks; c++) {
             bloomUnion.parentStates[i][c] <== parentStates[i][c];
@@ -64,32 +105,41 @@ template AncestralCommitmentComplianceFieldChunked(numChunks, k, depth, maxInput
     for (var c = 0; c < numChunks; c++) {
         bloomUnion.unionState[c] <== unionState[c];
     }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // (4) Prove that the flagged masked commitment is **not** in the Bloom filter
+    // --------------------------------------------------------------------
+    // Calculate chunk parameters
+    var bitsPerChunk = 254;
+    var lastChunkBits = mBits - (numChunks - 1) * bitsPerChunk;
     
-    // 3. Verify the flagged masked commitment is NOT in the union chain state
-    component bloomFilter = BloomFilterFieldChunked(numChunks, k, depth);
+    component bloomFilter = BloomFilterFieldChunked(numChunks, k, depth, bitsPerChunk, lastChunkBits);
     for (var c = 0; c < numChunks; c++) {
         bloomFilter.chainStateChunks[c] <== unionState[c];
         bloomFilter.flaggedStateChunks[c] <== flaggedStateChunks[c];
     }
-    
+
     bloomFilter.root <== root;
-    for (var i = 0; i < depth; i++) {
-        bloomFilter.siblings[i] <== siblings[i];
+    for (var d = 0; d < depth; d++) {
+        bloomFilter.siblings[d] <== siblings[d];
     }
-    bloomFilter.key <== key;
-    bloomFilter.value <== value;
-    bloomFilter.auxKey <== auxKey;
-    bloomFilter.auxValue <== auxValue;
+    bloomFilter.key       <== key;
+    bloomFilter.value     <== value;
+    bloomFilter.auxKey    <== auxKey;
+    bloomFilter.auxValue  <== auxValue;
     bloomFilter.auxIsEmpty <== auxIsEmpty;
     bloomFilter.isExclusion <== isExclusion;
-    
+
     notInSet <== bloomFilter.notInSet;
-    chainStateValid <== 1;
 }
 
-// Main component with parameters:
-// - numChunks: 65 (16384 bits / 254 bits per chunk = 64.5, rounded up to 65)
-// - k: 2 (number of hash functions)
-// - depth: 20 (SMT depth)
-// - maxInputs: 16 (maximum number of parent states)
-component main {public [root, key, isExclusion, chainStatesHash, numActiveInputs]} = AncestralCommitmentComplianceFieldChunked(65, 2, 20, 16);
+// ────────────────────────────────────────────────────────────────────────────
+//  Main component instantiation with concrete parameters
+//  * numChunks = 65  (-> Bloom filter of 16,384 bits)
+//  * k         = 2
+//  * depth     = 20  (SMT depth)
+//  * maxInputs = 16
+//  * mBits     = 16384 (exact Bloom length)
+//
+component main {public [root, key, isExclusion, chainStatesHash, numActiveInputs]} =
+    AncestralCommitmentComplianceFieldChunked(65, 2, 20, 16, 16384);
