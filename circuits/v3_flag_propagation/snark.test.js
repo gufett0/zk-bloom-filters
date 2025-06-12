@@ -16,8 +16,8 @@ const {
 // Circuit parameters from acc.circom
 const FILTER_SIZE = 16384;      // mBits
 const NUM_CHUNKS = 65;          // numChunks
-const BITS_PER_CHUNK = 254;     // standard field element bit size
-const LAST_CHUNK_BITS = FILTER_SIZE - (NUM_CHUNKS - 1) * BITS_PER_CHUNK; // 16384 - 64*254 = 128
+const BITS_PER_CHUNK = 253;     // standard field element bit size (fits in 254 bits, but last chunk may be smaller)
+const LAST_CHUNK_BITS = FILTER_SIZE - (NUM_CHUNKS - 1) * BITS_PER_CHUNK;
 const MAX_INPUTS = 16;          // maxInputs
 const K = 2;                    // number of hash functions
 
@@ -31,9 +31,9 @@ const ACC_VERIFICATION_KEY_FILE = path.join(ARTIFACTS_DIR, "acc_verification_key
 function getProcessMemoryUsage() {
     const usage = process.memoryUsage();
     return {
-        rss: Math.round(usage.rss / 1024 / 1024), 
-        heapUsed: Math.round(usage.heapUsed / 1024 / 1024), 
-        heapTotal: Math.round(usage.heapTotal / 1024 / 1024), 
+        rss: Math.round(usage.rss / 1024 / 1024),
+        heapUsed: Math.round(usage.heapUsed / 1024 / 1024),
+        heapTotal: Math.round(usage.heapTotal / 1024 / 1024),
     };
 }
 
@@ -45,19 +45,19 @@ async function generateACCProof(input) {
     if (!fs.existsSync(ACC_ZKEY_FILE)) {
         throw new Error(`ZKEY file not found: ${ACC_ZKEY_FILE}`);
     }
-    
+
     const startTime = Date.now();
     const memBefore = getProcessMemoryUsage();
-    
+
     const { proof, publicSignals } = await snarkjs.groth16.fullProve(
         input,
         ACC_WASM_FILE,
         ACC_ZKEY_FILE
     );
-    
+
     const endTime = Date.now();
     const memAfter = getProcessMemoryUsage();
-    
+
     return {
         proof,
         publicSignals,
@@ -78,32 +78,32 @@ async function verifyACCProof(proof, publicSignals) {
     if (!fs.existsSync(ACC_VERIFICATION_KEY_FILE)) {
         throw new Error(`Verification key not found: ${ACC_VERIFICATION_KEY_FILE}`);
     }
-    
+
     const vKey = JSON.parse(fs.readFileSync(ACC_VERIFICATION_KEY_FILE));
     return await snarkjs.groth16.verify(vKey, publicSignals, proof);
 }
 
 
 
-describe("Ancestral Commitment Compliance (ACC) Circuit Tests", function() {
-    this.timeout(300000); 
-    
+describe("Ancestral Commitment Compliance (ACC) Circuit Tests", function () {
+    this.timeout(300000);
+
     before(async () => {
         console.log("Checking ACC circuit artifacts...");
-        
+
         const requiredFiles = [ACC_WASM_FILE, ACC_ZKEY_FILE, ACC_VERIFICATION_KEY_FILE];
         for (const file of requiredFiles) {
             if (!fs.existsSync(file)) {
                 console.warn(`Warning: Required file not found: ${file}`);
                 console.warn("Skipping tests that require this file");
-            } else {    
+            } else {
                 console.log(`✓ Found: ${path.basename(file)}`);
             }
         }
-        
+
         console.log(`Circuit parameters: ${FILTER_SIZE} bits, ${NUM_CHUNKS} chunks, max ${MAX_INPUTS} inputs`);
     });
-    
+
     after(() => {
         console.log("ACC tests completed");
         process.nextTick(() => process.exit(0));
@@ -114,11 +114,11 @@ describe("Ancestral Commitment Compliance (ACC) Circuit Tests", function() {
             console.log("Skipping test - WASM file not found");
             return;
         }
-        
+
         console.log("Testing basic ACC proof generation...");
-        
+
         const numActiveInputs = 3;
-        
+
         // parent states like in witness.test.js
         const parentStates = [];
         for (let i = 0; i < MAX_INPUTS; i++) {
@@ -132,7 +132,7 @@ describe("Ancestral Commitment Compliance (ACC) Circuit Tests", function() {
                 parentStates.push(new Array(NUM_CHUNKS).fill("0"));
             }
         }
-        
+
         // compute expected union by unchunking, OR, and rechunking
         const unionBitArray = new Array(FILTER_SIZE).fill(0);
         for (let i = 0; i < numActiveInputs; i++) {
@@ -142,7 +142,7 @@ describe("Ancestral Commitment Compliance (ACC) Circuit Tests", function() {
             }
         }
         const unionState = chunkFieldElements(unionBitArray, BITS_PER_CHUNK, NUM_CHUNKS);
-        
+
         // the flagged commitment is NOT in the union for this test
         const flaggedKey = BigInt(ethers.hexlify(ethers.randomBytes(32)));
         const flaggedIndices = await computeBloomIndices(flaggedKey, FILTER_SIZE);
@@ -150,11 +150,11 @@ describe("Ancestral Commitment Compliance (ACC) Circuit Tests", function() {
         const flaggedStateChunks = chunkFieldElements(flaggedBitArray, BITS_PER_CHUNK, NUM_CHUNKS);
         const hasAllBits = flaggedIndices.every(idx => unionBitArray[idx] === 1);
         console.log(`Manual verification: flagged commitment in union = ${hasAllBits}`);
-        
+
         const chainStatesHash = await computeParentStatesHash(parentStates, numActiveInputs);
 
         const smtData = await setupSMTree(flaggedStateChunks);
-        
+
         // for debugging...
         console.log(`  numActiveInputs: ${numActiveInputs}`);
         console.log(`  chainStatesHash computed: ${chainStatesHash.toString().slice(0, 20)}...`);
@@ -176,18 +176,18 @@ describe("Ancestral Commitment Compliance (ACC) Circuit Tests", function() {
             auxIsEmpty: "0",
             isExclusion: "0"
         };
-        
+
         const result = await generateACCProof(input);
-        
+
         console.log(`  Proof generation time: ${result.proofTime}ms`);
         console.log(`  Memory usage: ${result.memoryUsed.delta.heapUsed}MB heap delta`);
         console.log(`  Total RSS: ${result.memoryUsed.after.rss}MB`);
-        
+
         console.log(`  Public signals received (${result.publicSignals.length} total):`);
         for (let i = 0; i < result.publicSignals.length; i++) {
             console.log(`    [${i}]: ${result.publicSignals[i]}`);
         }
-        
+
         // debug the signal 5..
         console.log(`  Expected values:`);
         console.log(`    root: ${smtData.root.toString()}`);
@@ -196,17 +196,17 @@ describe("Ancestral Commitment Compliance (ACC) Circuit Tests", function() {
         console.log(`    isExclusion: 0`);
         console.log(`    chainStatesHash: ${chainStatesHash.toString()}`);
         console.log(`    numActiveInputs: ${numActiveInputs.toString()}`);
-        
+
         const verified = await verifyACCProof(result.proof, result.publicSignals);
         console.log(`  Verification result: ${verified}`);
-        
+
         if (!verified) {
             console.log("  ❌ Verification failed - analyzing public signals...");
             return;
         }
-        
+
         expect(verified).to.be.true;
-        
+
         console.log(`✓ Valid ACC proof generated and verified`);
         console.log(`  notInSet: ${result.publicSignals[0]}, chainStateValid: ${result.publicSignals[1]}`);
     });
@@ -216,13 +216,13 @@ describe("Ancestral Commitment Compliance (ACC) Circuit Tests", function() {
             console.log("Skipping test - WASM file not found");
             return;
         }
-        
+
         console.log("Testing ACC proof failure scenarios...");
-        
+
         const numActiveInputs = 2;
 
         const parentStates = [];
-        
+
         for (let i = 0; i < MAX_INPUTS; i++) {
             if (i < numActiveInputs) {
                 const key = BigInt(ethers.hexlify(ethers.randomBytes(32)));
@@ -234,18 +234,18 @@ describe("Ancestral Commitment Compliance (ACC) Circuit Tests", function() {
                 parentStates.push(new Array(NUM_CHUNKS).fill("0"));
             }
         }
-        
+
         // create wrong union (just use first parent instead of actual union)
         const wrongUnionState = [...parentStates[0]];
-        
+
         const flaggedKey = BigInt(ethers.hexlify(ethers.randomBytes(32)));
         const flaggedIndices = await computeBloomIndices(flaggedKey, FILTER_SIZE);
         const flaggedBitArray = createBitArray(FILTER_SIZE, flaggedIndices);
         const flaggedStateChunks = chunkFieldElements(flaggedBitArray, BITS_PER_CHUNK, NUM_CHUNKS);
-        
+
         const chainStatesHash = await computeParentStatesHash(parentStates, numActiveInputs);
         const smtData = await setupSMTree(flaggedStateChunks);
-        
+
         const input = {
             numActiveInputs: numActiveInputs.toString(),
             parentStates,
@@ -261,21 +261,21 @@ describe("Ancestral Commitment Compliance (ACC) Circuit Tests", function() {
             auxIsEmpty: "0",
             isExclusion: "0"
         };
-        
+
         try {
             await generateACCProof(input);
             expect.fail("Should have failed with incorrect union");
         } catch (error) {
             const errorMessage = error.message.toLowerCase();
-            const isValidError = errorMessage.includes("assert failed") || 
-                                errorMessage.includes("constraint") || 
-                                errorMessage.includes("error");
+            const isValidError = errorMessage.includes("assert failed") ||
+                errorMessage.includes("constraint") ||
+                errorMessage.includes("error");
             expect(isValidError).to.be.true;
             console.log("✓ Correctly failed with invalid union computation");
         }
-        
+
         console.log("  Testing invalid parent states hash...");
-        
+
         const correctUnionBitArray = new Array(FILTER_SIZE).fill(0);
         for (let i = 0; i < numActiveInputs; i++) {
             const parentBitArray = unchunkFieldElements(parentStates[i], BITS_PER_CHUNK, LAST_CHUNK_BITS);
@@ -284,7 +284,7 @@ describe("Ancestral Commitment Compliance (ACC) Circuit Tests", function() {
             }
         }
         const correctUnionState = chunkFieldElements(correctUnionBitArray, BITS_PER_CHUNK, NUM_CHUNKS);
-        
+
         const input2 = {
             numActiveInputs: numActiveInputs.toString(),
             parentStates,
@@ -300,15 +300,15 @@ describe("Ancestral Commitment Compliance (ACC) Circuit Tests", function() {
             auxIsEmpty: "0",
             isExclusion: "0"
         };
-        
+
         try {
             await generateACCProof(input2);
             expect.fail("Should have failed with invalid parent states hash");
         } catch (error) {
             const errorMessage = error.message.toLowerCase();
-            const isValidError = errorMessage.includes("assert failed") || 
-                                errorMessage.includes("constraint") || 
-                                errorMessage.includes("error");
+            const isValidError = errorMessage.includes("assert failed") ||
+                errorMessage.includes("constraint") ||
+                errorMessage.includes("error");
             expect(isValidError).to.be.true;
             console.log("✓ Correctly failed with invalid parent states hash");
         }
@@ -319,41 +319,41 @@ describe("Ancestral Commitment Compliance (ACC) Circuit Tests", function() {
             console.log("Skipping test - WASM file not found");
             return;
         }
-        
+
         console.log("Testing realistic UTXO merge scenarios...");
-        
+
         const scenarios = [
             { name: "Small merge (2 UTXOs)", numActiveInputs: 2 },
             { name: "Medium merge (5 UTXOs)", numActiveInputs: 5 },
             { name: "Large merge (16 UTXOs)", numActiveInputs: 16 }
         ];
-        
+
         for (const scenario of scenarios) {
             console.log(`  Testing scenario: ${scenario.name}`);
-            
+
             const parentStates = [];
-            
+
             // simulate varying complexity
             for (let i = 0; i < MAX_INPUTS; i++) {
                 if (i < scenario.numActiveInputs) {
                     const filter = new Array(FILTER_SIZE).fill(0);
-                    
+
                     // first few utxos have more accumulated chain state
                     const numCommitments = i < 3 ? 10 : (i < 8 ? 5 : 2);
-                    
+
                     for (let j = 0; j < numCommitments; j++) {
                         const key = BigInt(ethers.hexlify(ethers.randomBytes(32)));
                         const indices = await computeBloomIndices(key, FILTER_SIZE);
                         indices.forEach(idx => filter[idx] = 1);
                     }
-                    
+
                     const chunks = chunkFieldElements(filter, BITS_PER_CHUNK, NUM_CHUNKS);
                     parentStates.push(chunks);
                 } else {
                     parentStates.push(new Array(NUM_CHUNKS).fill("0"));
                 }
             }
-            
+
             const unionBitArray = new Array(FILTER_SIZE).fill(0);
             for (let i = 0; i < scenario.numActiveInputs; i++) {
                 const parentBitArray = unchunkFieldElements(parentStates[i], BITS_PER_CHUNK, LAST_CHUNK_BITS);
@@ -362,16 +362,16 @@ describe("Ancestral Commitment Compliance (ACC) Circuit Tests", function() {
                 }
             }
             const unionState = chunkFieldElements(unionBitArray, BITS_PER_CHUNK, NUM_CHUNKS);
-            
+
             // create flagged commitment not in union
             const flaggedKey = BigInt(ethers.hexlify(ethers.randomBytes(32)));
             const flaggedIndices = await computeBloomIndices(flaggedKey, FILTER_SIZE);
             const flaggedBitArray = createBitArray(FILTER_SIZE, flaggedIndices);
             const flaggedStateChunks = chunkFieldElements(flaggedBitArray, BITS_PER_CHUNK, NUM_CHUNKS);
-            
+
             const chainStatesHash = await computeParentStatesHash(parentStates, scenario.numActiveInputs);
             const smtData = await setupSMTree(flaggedStateChunks);
-            
+
             const input = {
                 numActiveInputs: scenario.numActiveInputs.toString(),
                 parentStates,
@@ -387,16 +387,16 @@ describe("Ancestral Commitment Compliance (ACC) Circuit Tests", function() {
                 auxIsEmpty: "0",
                 isExclusion: "0"
             };
-            
+
             const result = await generateACCProof(input);
             const verified = await verifyACCProof(result.proof, result.publicSignals);
-            
+
             expect(verified).to.be.true;
             expect(result.publicSignals).to.have.length(7);
-            
+
             const setBits = unionBitArray.filter(bit => bit === 1).length;
             const density = (setBits / FILTER_SIZE * 100).toFixed(2);
-            
+
             console.log(`    ✓ ${scenario.name}: ${result.proofTime}ms, ${result.memoryUsed.delta.heapUsed}MB heap`);
             console.log(`      Union density: ${setBits}/${FILTER_SIZE} bits (${density}%)`);
             console.log(`      Proof verified successfully`);
@@ -408,44 +408,45 @@ describe("Ancestral Commitment Compliance (ACC) Circuit Tests", function() {
             console.log("Skipping test - WASM file not found");
             return;
         }
-        
+
         console.log("Testing different false positive rates...");
-        
+
         const scenarios = [
-            { name: "Low saturation (1-5% density)", targetDensity: 0.03, expectedFP: "low" },
+            { name: "Low saturation (1-5% density)", targetDensity: 0.02, expectedFP: "low" },
             { name: "Medium saturation (10-15% density)", targetDensity: 0.12, expectedFP: "medium" },
             { name: "High saturation (20-25% density)", targetDensity: 0.22, expectedFP: "high" }
         ];
-        
+
         for (const scenario of scenarios) {
             console.log(`  Testing scenario: ${scenario.name}`);
-            
+
             const numActiveInputs = 8;
             const targetBits = Math.floor(FILTER_SIZE * scenario.targetDensity);
-            
+
             // create parent states that will result in target density
             const parentStates = [];
-            
+
             for (let i = 0; i < MAX_INPUTS; i++) {
                 if (i < numActiveInputs) {
                     const filter = new Array(FILTER_SIZE).fill(0);
-                    
+
                     // calculate how many bloom filter elements to add to reach target density (more or less)
                     const targetBitsForThisParent = Math.floor((targetBits / numActiveInputs) / K);
-                    
+
                     for (let j = 0; j < targetBitsForThisParent; j++) {
                         const key = BigInt(ethers.hexlify(ethers.randomBytes(32)));
                         const indices = await computeBloomIndices(key, FILTER_SIZE);
                         indices.forEach(idx => filter[idx] = 1);
                     }
-                    
+
                     const chunks = chunkFieldElements(filter, BITS_PER_CHUNK, NUM_CHUNKS);
                     parentStates.push(chunks);
                 } else {
                     parentStates.push(new Array(NUM_CHUNKS).fill("0"));
                 }
             }
-            
+
+
             const unionBitArray = new Array(FILTER_SIZE).fill(0);
             for (let i = 0; i < numActiveInputs; i++) {
                 const parentBitArray = unchunkFieldElements(parentStates[i], BITS_PER_CHUNK, LAST_CHUNK_BITS);
@@ -454,15 +455,15 @@ describe("Ancestral Commitment Compliance (ACC) Circuit Tests", function() {
                 }
             }
             const unionState = chunkFieldElements(unionBitArray, BITS_PER_CHUNK, NUM_CHUNKS);
-            
+
             const flaggedKey = BigInt(ethers.hexlify(ethers.randomBytes(32)));
             const flaggedIndices = await computeBloomIndices(flaggedKey, FILTER_SIZE);
             const flaggedBitArray = createBitArray(FILTER_SIZE, flaggedIndices);
             const flaggedStateChunks = chunkFieldElements(flaggedBitArray, BITS_PER_CHUNK, NUM_CHUNKS);
-            
+
             const chainStatesHash = await computeParentStatesHash(parentStates, numActiveInputs);
             const smtData = await setupSMTree(flaggedStateChunks);
-            
+
             const input = {
                 numActiveInputs: numActiveInputs.toString(),
                 parentStates,
@@ -478,17 +479,17 @@ describe("Ancestral Commitment Compliance (ACC) Circuit Tests", function() {
                 auxIsEmpty: "0",
                 isExclusion: "0"
             };
-            
+
             const result = await generateACCProof(input);
             const verified = await verifyACCProof(result.proof, result.publicSignals);
-            
+
             expect(verified).to.be.true;
             expect(result.publicSignals).to.have.length(7);
-            
+
             const actualSetBits = unionBitArray.filter(bit => bit === 1).length;
             const actualDensity = actualSetBits / FILTER_SIZE;
             const fpProbability = Math.pow(actualDensity, K);
-            
+
             console.log(`    ✓ ${scenario.name}: ${result.proofTime}ms, ${result.memoryUsed.delta.heapUsed}MB heap`);
             console.log(`      Actual density: ${(actualDensity * 100).toFixed(2)}%`);
             console.log(`      False positive probability: ${(fpProbability * 100).toFixed(4)}%`);

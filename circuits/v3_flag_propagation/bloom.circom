@@ -262,7 +262,7 @@ template BloomFilterUnionFieldChunked(numChunks, maxInputs, mBits) {
     signal input parentStates[maxInputs][numChunks];
     signal input unionState[numChunks];
 
-    var bitsPerChunk = 254;
+    var bitsPerChunk = 253;
     var lastChunkBits = mBits - (numChunks - 1) * bitsPerChunk;
     
     // verify numActiveInputs is in valid range [2, maxInputs]

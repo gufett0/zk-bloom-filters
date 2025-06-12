@@ -9,8 +9,8 @@ describe("Ancestral Commitment Compliance Tests", function() {
     
     let circuit;
     const FILTER_SIZE = 16384;
-    const NUM_CHUNKS = 65; // 16384 bits / 254 bits per chunk ≈ 65 chunks
-    const BITS_PER_CHUNK = 254;
+    const NUM_CHUNKS = 65; 
+    const BITS_PER_CHUNK = 253;
     const LAST_CHUNK_BITS = FILTER_SIZE - (NUM_CHUNKS - 1) * BITS_PER_CHUNK; // remaining bits in last chunk
     const MAX_INPUTS = 16;
     

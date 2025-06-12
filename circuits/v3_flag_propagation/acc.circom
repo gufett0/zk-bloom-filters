@@ -110,7 +110,7 @@ template AncestralCommitmentComplianceFieldChunked(
     // (4) Prove that the flagged masked commitment is **not** in the Bloom filter
     // --------------------------------------------------------------------
     // Calculate chunk parameters
-    var bitsPerChunk = 254;
+    var bitsPerChunk = 253;
     var lastChunkBits = mBits - (numChunks - 1) * bitsPerChunk;
     
     component bloomFilter = BloomFilterFieldChunked(numChunks, k, depth, bitsPerChunk, lastChunkBits);
