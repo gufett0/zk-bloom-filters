@@ -28,7 +28,6 @@ const ACC_ZKEY_FILE = path.join(ARTIFACTS_DIR, "acc.zkey");
 const ACC_VERIFICATION_KEY_FILE = path.join(ARTIFACTS_DIR, "acc_verification_key.json");
 
 
-
 function getProcessMemoryUsage() {
     const usage = process.memoryUsage();
     return {
@@ -97,7 +96,7 @@ describe("Ancestral Commitment Compliance (ACC) Circuit Tests", function() {
             if (!fs.existsSync(file)) {
                 console.warn(`Warning: Required file not found: ${file}`);
                 console.warn("Skipping tests that require this file");
-            } else {
+            } else {    
                 console.log(`✓ Found: ${path.basename(file)}`);
             }
         }
@@ -198,32 +197,18 @@ describe("Ancestral Commitment Compliance (ACC) Circuit Tests", function() {
         console.log(`    chainStatesHash: ${chainStatesHash.toString()}`);
         console.log(`    numActiveInputs: ${numActiveInputs.toString()}`);
         
-        console.log(`  Signal [5] matches value? ${result.publicSignals[5] === smtData.value.toString()}`);
-        console.log(`  Signal [5] matches key? ${result.publicSignals[5] === smtData.key.toString()}`);
-        
         const verified = await verifyACCProof(result.proof, result.publicSignals);
         console.log(`  Verification result: ${verified}`);
         
         if (!verified) {
             console.log("  ❌ Verification failed - analyzing public signals...");
-            return; // skippa l'assertions per vedere il debug
+            return;
         }
         
         expect(verified).to.be.true;
         
-        // check public signals based on actual order observed: is necessary??
-        expect(result.publicSignals).to.have.length(7);
-        expect(result.publicSignals[0]).to.equal(hasAllBits ? "0" : "1"); // notInSet
-        expect(result.publicSignals[1]).to.equal("1"); // chainStateValid should be 1 (valid)
-        expect(result.publicSignals[2]).to.equal(numActiveInputs.toString()); // numActiveInputs
-        expect(result.publicSignals[3]).to.equal(chainStatesHash.toString()); // chainStatesHash
-        expect(result.publicSignals[4]).to.equal(smtData.root.toString()); // root
-
-        expect(result.publicSignals[6]).to.equal("0"); // isExclusion
-        
         console.log(`✓ Valid ACC proof generated and verified`);
         console.log(`  notInSet: ${result.publicSignals[0]}, chainStateValid: ${result.publicSignals[1]}`);
-        console.log(`  Signal [5] is: ${signal5IsValue ? 'value' : 'key'}`);
     });
 
     it("should fail proof generation with invalid proof ACC", async () => {

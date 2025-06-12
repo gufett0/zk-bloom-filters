@@ -130,10 +130,11 @@ function createBitArray(size, indices) {
     return arr;
 }
 
-// NEW FUNCTIONS FOR ACC CIRCUIT TESTS
 
 function chunkFieldElements(bitArray, bitsPerChunk, numChunks) {
     const chunks = [];
+    const maxChunkValue = (BigInt(1) << BigInt(bitsPerChunk)) - BigInt(1);
+    
     for (let i = 0; i < numChunks; i++) {
         let chunk = BigInt(0);
         const startBit = i * bitsPerChunk;
@@ -144,6 +145,11 @@ function chunkFieldElements(bitArray, bitsPerChunk, numChunks) {
                 chunk |= BigInt(1) << BigInt(j - startBit);
             }
         }
+        
+        if (chunk >= maxChunkValue) {
+            throw new Error(`Chunk ${i} overflow: ${chunk} >= ${maxChunkValue}`);
+        }
+        
         chunks.push(chunk.toString());
     }
     return chunks;

@@ -13,8 +13,6 @@ describe("Ancestral Commitment Compliance Tests", function() {
     const BITS_PER_CHUNK = 254;
     const LAST_CHUNK_BITS = FILTER_SIZE - (NUM_CHUNKS - 1) * BITS_PER_CHUNK; // remaining bits in last chunk
     const MAX_INPUTS = 16;
-    const K = 2; // number of hash functions
-    const SMT_DEPTH = 20;
     
     before(async () => {
         circuit = await wasm(path.join(__dirname, "acc.circom"));
@@ -25,18 +23,15 @@ describe("Ancestral Commitment Compliance Tests", function() {
         it("should authenticate valid parent states hash", async () => {
             const numActiveInputs = 3;
             
-            // Create parent states (chunked bloom filters)
             const parentStates = [];
             for (let i = 0; i < MAX_INPUTS; i++) {
                 if (i < numActiveInputs) {
-                    // Create a bloom filter for active parents
                     const key = BigInt(ethers.hexlify(ethers.randomBytes(32)));
                     const indices = await computeBloomIndices(key, FILTER_SIZE);
                     const bitArray = createBitArray(FILTER_SIZE, indices);
                     const chunks = chunkFieldElements(bitArray, BITS_PER_CHUNK, NUM_CHUNKS);
                     parentStates.push(chunks);
                 } else {
-                    // Empty state for inactive parents
                     parentStates.push(new Array(NUM_CHUNKS).fill(0));
                 }
             }
@@ -82,7 +77,7 @@ describe("Ancestral Commitment Compliance Tests", function() {
             const witness = await circuit.calculateWitness(input);
             await circuit.checkConstraints(witness);
             
-            const chainStateValid = witness[2]; // assuming this is the output index
+            const chainStateValid = witness[2]; 
             expect(chainStateValid.toString()).to.equal("1");
             console.log("Parent states authentication passed");
         });
@@ -155,7 +150,6 @@ describe("Ancestral Commitment Compliance Tests", function() {
         it("should correctly verify union of multiple parent states", async () => {
             const numActiveInputs = 4;
             
-            // Create distinct parent states
             const parentStates = [];
             const parentKeys = [];
             
@@ -172,7 +166,6 @@ describe("Ancestral Commitment Compliance Tests", function() {
                 }
             }
             
-            // Compute correct union
             const unionBitArray = new Array(FILTER_SIZE).fill(0);
             for (let i = 0; i < numActiveInputs; i++) {
                 const parentBitArray = unchunkFieldElements(parentStates[i], BITS_PER_CHUNK, LAST_CHUNK_BITS);
@@ -210,7 +203,7 @@ describe("Ancestral Commitment Compliance Tests", function() {
             const witness = await circuit.calculateWitness(input);
             await circuit.checkConstraints(witness);
             
-            const notInSet = witness[1]; // assuming this is the output index
+            const notInSet = witness[1]; 
             expect(notInSet.toString()).to.equal("1"); // should be NOT in set
             console.log("Union computation verified successfully");
         });
@@ -231,7 +224,6 @@ describe("Ancestral Commitment Compliance Tests", function() {
                 }
             }
             
-            // Create WRONG union (just use first parent instead of actual union)
             const wrongUnionState = [...parentStates[0]];
             
             const flaggedKey = BigInt(ethers.hexlify(ethers.randomBytes(32)));
@@ -307,7 +299,6 @@ describe("Ancestral Commitment Compliance Tests", function() {
                 }
             }
             
-            // Compute expected union
             const unionBitArray = new Array(FILTER_SIZE).fill(0);
             for (let i = 0; i < numActiveInputs; i++) {
                 const parentBitArray = unchunkFieldElements(parentStates[i], BITS_PER_CHUNK, LAST_CHUNK_BITS);
@@ -317,7 +308,6 @@ describe("Ancestral Commitment Compliance Tests", function() {
             }
             const unionState = chunkFieldElements(unionBitArray, BITS_PER_CHUNK, NUM_CHUNKS);
             
-            // Create flagged commitment not in any parent
             const flaggedKey = BigInt(ethers.hexlify(ethers.randomBytes(32)));
             const flaggedIndices = await computeBloomIndices(flaggedKey, FILTER_SIZE);
             const flaggedBitArray = createBitArray(FILTER_SIZE, flaggedIndices);
