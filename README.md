@@ -15,6 +15,6 @@ Bloom non-membership:
 `snarkjs zkey export verificationkey circuits/artifacts/circuits/non_membership.zkey circuits/artifacts/circuits/verification_key.json`
 Full ACC:
 `snarkjs zkey export verificationkey circuits/artifacts/circuits2/acc.zkey circuits/artifacts/circuits2/acc_verification_key.json`
-
-
+Full ACC (solidity):
+`snarkjs zkey export solidityverifier circuits/artifacts/circuits2/acc.zkey circuits/artifacts/circuits2/Verifier.sol`
 

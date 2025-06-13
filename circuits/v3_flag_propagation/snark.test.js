@@ -16,7 +16,7 @@ const {
 // Circuit parameters from acc.circom
 const FILTER_SIZE = 16384;      // mBits
 const NUM_CHUNKS = 65;          // numChunks
-const BITS_PER_CHUNK = 253;     // standard field element bit size (fits in 254 bits, but last chunk may be smaller)
+const BITS_PER_CHUNK = 253;     // standard field element bit size (last chunk may be smaller)
 const LAST_CHUNK_BITS = FILTER_SIZE - (NUM_CHUNKS - 1) * BITS_PER_CHUNK;
 const MAX_INPUTS = 16;          // maxInputs
 const K = 2;                    // number of hash functions
@@ -57,19 +57,81 @@ async function generateACCProof(input) {
 
     const endTime = Date.now();
     const memAfter = getProcessMemoryUsage();
+    
+    const pureProofTime = endTime - startTime;
+    const memoryUsed = {
+        before: memBefore,
+        after: memAfter,
+        delta: {
+            rss: memAfter.rss - memBefore.rss,
+            heapUsed: memAfter.heapUsed - memBefore.heapUsed,
+            heapTotal: memAfter.heapTotal - memBefore.heapUsed
+        }
+    };
+
+    setImmediate(async () => {
+        try {
+            const saveStartTime = Date.now();
+            
+            const testDataDir = path.join(__dirname, "../../test");
+            
+            if (!fs.existsSync(testDataDir)) {
+                fs.mkdirSync(testDataDir, { recursive: true });
+            }
+
+            const proofDataForContract = {
+                proof: {
+                    // !! per il contratto, pi_b ha ordine diverso
+                    pi_a: [proof.pi_a[0], proof.pi_a[1]],
+                    pi_b: [[proof.pi_b[0][1], proof.pi_b[0][0]], [proof.pi_b[1][1], proof.pi_b[1][0]]],
+                    pi_c: [proof.pi_c[0], proof.pi_c[1]]
+                },
+                publicSignals: publicSignals.map(s => s.toString()),
+                
+                originalProof: {
+                    pi_a: proof.pi_a,
+                    pi_b: proof.pi_b, 
+                    pi_c: proof.pi_c
+                },
+                
+                metadata: {
+                    timestamp: new Date().toISOString(),
+                    pureProofTime: pureProofTime, // tempo puro di generazione
+                    circuitName: "acc",
+                    inputSummary: {
+                        numActiveInputs: input.numActiveInputs,
+                        hasUnionState: !!input.unionState,
+                        hasSMTData: !!(input.root && input.siblings)
+                    }
+                }
+            };
+
+            const timestamp = Date.now();
+            const proofFile = path.join(testDataDir, `acc_proof_${timestamp}.json`);
+            const latestProofFile = path.join(testDataDir, `acc_proof_latest.json`);
+            
+            fs.writeFileSync(proofFile, JSON.stringify(proofDataForContract, null, 2));
+            fs.writeFileSync(latestProofFile, JSON.stringify(proofDataForContract, null, 2));
+            
+            const saveEndTime = Date.now();
+            const saveTime = saveEndTime - saveStartTime;
+            
+            console.log(`current proof data saved to: ${path.basename(proofFile)}`);
+            
+        } catch (saveError) {
+            console.warn(`Failed to save proof data: ${saveError.message}`);
+        }
+    });
 
     return {
         proof,
         publicSignals,
-        proofTime: endTime - startTime,
-        memoryUsed: {
-            before: memBefore,
-            after: memAfter,
-            delta: {
-                rss: memAfter.rss - memBefore.rss,
-                heapUsed: memAfter.heapUsed - memBefore.heapUsed,
-                heapTotal: memAfter.heapTotal - memBefore.heapTotal
-            }
+        proofTime: pureProofTime, 
+        memoryUsed,
+        
+        metadata: {
+            savedAsync: true,
+            measurementAccurate: true
         }
     };
 }
@@ -155,12 +217,6 @@ describe("Ancestral Commitment Compliance (ACC) Circuit Tests", function () {
 
         const smtData = await setupSMTree(flaggedStateChunks);
 
-        // for debugging...
-        console.log(`  numActiveInputs: ${numActiveInputs}`);
-        console.log(`  chainStatesHash computed: ${chainStatesHash.toString().slice(0, 20)}...`);
-        console.log(`  SMT root: ${smtData.root.toString().slice(0, 20)}...`);
-        console.log(`  Union density: ${unionBitArray.filter(b => b === 1).length}/${FILTER_SIZE}`);
-
         const input = {
             numActiveInputs: numActiveInputs.toString(),
             parentStates,
@@ -187,15 +243,6 @@ describe("Ancestral Commitment Compliance (ACC) Circuit Tests", function () {
         for (let i = 0; i < result.publicSignals.length; i++) {
             console.log(`    [${i}]: ${result.publicSignals[i]}`);
         }
-
-        // debug the signal 5..
-        console.log(`  Expected values:`);
-        console.log(`    root: ${smtData.root.toString()}`);
-        console.log(`    key: ${smtData.key.toString()}`);
-        console.log(`    value: ${smtData.value.toString()}`);
-        console.log(`    isExclusion: 0`);
-        console.log(`    chainStatesHash: ${chainStatesHash.toString()}`);
-        console.log(`    numActiveInputs: ${numActiveInputs.toString()}`);
 
         const verified = await verifyACCProof(result.proof, result.publicSignals);
         console.log(`  Verification result: ${verified}`);

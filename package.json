@@ -6,20 +6,24 @@
         "test": "mocha circuits/v3_flag_propagation/witness.test.js",
         "prove": "mocha circuits/v3_flag_propagation/snark.test.js",
         "compile": "circom circuits/v3_flag_propagation/non_membership.circom --r1cs --wasm --sym -o circuits/artifacts/circuits",
-        "compile2": "circom circuits/v3_flag_propagation/acc.circom --r1cs --wasm --sym -o circuits/artifacts/circuits2"
+        "compile2": "circom circuits/v3_flag_propagation/acc.circom --r1cs --wasm --sym -o circuits/artifacts/circuits2",
+        "deploy:verifier": "npx hardhat ignition deploy ignition/modules/VerifierACC.js --network localhost",
+        "test:verifier": "npx hardhat test test/VerifierACC.test.js"
     },
     "keywords": [],
     "author": "",
     "license": "ISC",
     "description": "",
     "dependencies": {
-        "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+        "@openzeppelin/contracts": "^4.2.0",
+        "@openzeppelin/contracts-upgradeable": "4.9.3",
+        "@solarity/solidity-lib": "^2.7.11",
         "@zk-kit/smt": "^1.0.2",
-        "chai": "^4.2.0",
         "circomlib": "^2.0.4",
         "circomlibjs": "^0.1.4",
         "dotenv": "^16.4.5",
-        "snarkjs": "^0.7.5"
+        "snarkjs": "^0.7.5",
+        "ethers": "^6.7.0"
 
     },
     "devDependencies": {
@@ -27,7 +31,10 @@
         "@types/circomlibjs": "^0.1.6",
         "@types/mocha": "^10.0.10",
         "circom_tester": "^0.0.20",
+        "@nomicfoundation/hardhat-ignition": "^0.15.10",
+        "@nomicfoundation/hardhat-toolbox": "^5.0.0",
         "hardhat": "^2.22.6",
-        "mocha": "^10.1.0"
+        "mocha": "^10.1.0",
+        "chai": "^4.2.0"
     }
 }
