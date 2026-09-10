@@ -1,7 +1,7 @@
 /.env
 /circuits/artifacts/*
 /node_modules
-
+**/.DS_Store
 
 
 
